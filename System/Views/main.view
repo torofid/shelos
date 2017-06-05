@@ -1,0 +1,57 @@
+{
+	Children = {
+		-- {
+		-- 	X = 1,
+		-- 	Y = 1,
+		-- 	Height = 1,
+		-- 	Type = 'Label',
+		-- 	Name = 'HomeButton',
+		-- 	Text = '<'
+		-- },
+		-- {
+		-- 	X = "100%",
+		-- 	Y = 1,
+		-- 	Height = 1,
+		-- 	Type = 'Label',
+		-- 	Name = 'CloseButton',
+		-- 	Text = 'x'
+		-- },
+		{
+			X = 1,
+			Y = 1,
+			Type = 'Switcher',
+			Width = '100%'
+			-- InheritView = 'switcher',
+		},
+		{
+			X = 1,
+			Y = 1,
+			Width = "100%",
+			Height = '100%',
+			Type = 'View',
+			Name = 'SplashView',
+			BackgroundColour = 'white',
+			Children = {
+				{
+					X = 1,
+					Y = '50%,-1',
+					Width = '100%',
+					Align = 'Center',
+					Text = 'shelOS',
+					Type = 'Label',
+					TextColour = 'grey'
+				},
+				{
+					X = 1,
+					Y = '50%',
+					Width = '100%',
+					Align = 'Center',
+					Text = 'by ToroFid and Lukedam',
+					Type = 'Label',
+					TextColour = 'lightGrey'
+				},
+			}
+		},
+	},
+	BackgroundColour = 'black'
+}

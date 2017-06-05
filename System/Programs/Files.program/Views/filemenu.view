@@ -1,0 +1,90 @@
+{
+  Type = 'Menu',
+  Children = {
+    {
+      Name = 'OpenMenuItem',
+      Type = 'MenuItem',
+      Text = 'Open'
+    },
+    {
+      Name = 'ViewBundleMenuItem',
+      Type = 'MenuItem',
+      Text = 'View Bundle Content'
+    },
+    {
+      Name = 'OpenArgsMenuItem',
+      Type = 'MenuItem',
+      Text = 'Open With Arguments...'
+    },
+    {
+      Name = 'OpenWithMenuItem',
+      Type = 'MenuItem',
+      Text = 'Open With...'
+    },
+    {
+      Type = 'Separator'
+    },
+    {
+      Name = 'TransmitMenuItem',
+      Type = 'MenuItem',
+      Text = 'Transmit'
+    },
+    {
+      Name = 'CreatePackageMenuItem',
+      Type = 'MenuItem',
+      Text = 'Create Package'
+    },
+    {
+      Type = 'Separator'
+    },
+    {
+      Name = 'RenameMenuItem',
+      Type = 'MenuItem',
+      Text = 'Rename...'
+    },
+    {
+      Name = 'DeleteMenuItem',
+      Type = 'MenuItem',
+      Text = 'Delete...'
+    },
+    {
+      Name = 'AddToFavouritesMenuItem',
+      Type = 'MenuItem',
+      Text = 'Add To Favourites'
+    },
+    {
+      Name = 'AddToDesktopMenuItem',
+      Type = 'MenuItem',
+      Text = 'Add To Desktop'
+    },
+    {
+      Name = 'MakeAliasMenuItem',
+      Type = 'MenuItem',
+      Text = 'Make Alias'
+    },
+    {
+      Name = 'ResolveAliasMenuItem',
+      Type = 'MenuItem',
+      Text = 'Show Real File'
+    },
+    {
+      Type = 'Separator'
+    },
+    {
+      Name = 'CopyMenuItem',
+      Type = 'MenuItem',
+      Text = 'Copy'
+    },
+    {
+      Name = 'CutMenuItem',
+      Type = 'MenuItem',
+      Text = 'Cut'
+    },
+    {
+      Name = 'PasteMenuItem',
+      Type = 'MenuItem',
+      Text = 'Paste',
+      Enabled = false
+    },
+  },
+}

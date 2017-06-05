@@ -1,0 +1,343 @@
+shelOS.LoadAPI('/System/API/Bedrock.lua')
+
+local program = Bedrock:Initialise()
+
+local args = {...}
+
+_fs = shelOS.FS
+
+program.OnKeyChar = function(self, event, keychar)
+	if keychar == '\\' then
+		os.reboot()
+	end
+end
+
+local currentPath = nil
+local showHidden = false
+local showExtensions = false
+
+local refresh
+
+local function paste()
+	shelOS.System.Clipboard:Paste(function(path, _type, isCut)
+		if _type == 'path' then
+			if _fs.exists(path) then
+				local destPath
+				local n = 0
+				while not destPath or _fs.exists(destPath) do
+					destPath = currentPath .. program.Helpers.RemoveExtension(fs.getName(path)) .. (n == 0 and '' or ' ' .. n) .. program.Helpers.Extension(fs.getName(path), true)
+					n = n + 1
+				end
+
+				if isCut then
+					_fs.move(path, destPath)
+				else
+					_fs.copy(path, destPath)
+				end
+				refresh()
+			end
+		end
+	end)
+end
+
+local history = {}
+local historyItem = 0
+
+local function updateHistoryButtons()
+	if history[historyItem-1] then
+		program:GetObject('BackButton').Enabled = true
+	else
+		program:GetObject('BackButton').Enabled = false
+	end
+
+	if history[historyItem+1] then
+		program:GetObject('ForwardButton').Enabled = true
+	else
+		program:GetObject('ForwardButton').Enabled = false
+	end
+end
+
+local function addHistoryPath(path)
+	for i, v in ipairs(history) do
+		if i > historyItem then
+			history[i] = nil
+		end
+	end
+	table.insert(history, path)
+	historyItem = #history
+	updateHistoryButtons()
+end
+
+local function openFolder(path, selected)
+	path = program.Helpers.TidyPath(shelOS.System.ResolveAlias(path))
+	currentPath = path
+	-- addHistoryPath(currentPath)
+	-- updateHistoryButtons()
+
+
+	shelOS.Log.i(historyItem)
+
+	shelOS.Log.i(textutils.serialize(history))
+
+	local items = {}
+
+	if selected then
+		selected = program.Helpers.TidyPath(selected)
+	end
+
+	for i, v in ipairs(_fs.list(path)) do
+		if showHidden or v:sub(1, 1) ~= '.' then
+			local filePath = program.Helpers.TidyPath(path .. '/' .. v)
+			table.insert(items, 
+				{
+					Type = 'FileIcon',
+					Path = filePath,
+					Selected = filePath == selected,
+					ShowExtension = showExtensions,
+					OnClick = function(self, event, side, x, y, _)
+						if not _ then return end
+
+						local extension = shelOS.System.RealExtension(self.Path)
+						if side == 2 then
+							if self:ToggleMenu('filemenu', x, y) then
+								local menu = self.Bedrock.Menu
+								local readOnly = shelOS.System.Bedrock.FileSystem.RawFS.isReadOnly(self.Path)
+
+								if not _fs.isDir(self.Path) or (not extension or #extension == 0) then
+									menu:RemoveObject('ViewBundleMenuItem')
+								else
+									menu:GetObject('ViewBundleMenuItem').OnClick = function()
+										openFolder(self.Path)
+									end
+								end
+
+								if extension ~= 'program' then
+									menu:RemoveObject('OpenArgsMenuItem')
+								else
+									menu:GetObject('OpenArgsMenuItem').OnClick = function()
+										shelOS.System.OpenFileArgs(self.Path, program)
+									end
+								end
+
+								if _fs.isDir(self.Path) then
+									menu:RemoveObject('TransmitMenuItem')
+									menu:RemoveObject('OpenWithMenuItem')
+
+									menu:GetObject('CreatePackageMenuItem').OnClick = function()
+										local packrun = loadfile('pkgmake')
+										local env = getfenv()
+										setfenv( packrun, env)
+										local path = self.Path:sub(1,#self.Path-1)
+										packrun(self.Path, program.Helpers.RemoveFileName(path)..program.Helpers.RemoveExtension(fs.getName(path))..'.pkg')
+										refresh()
+									end
+								else
+									menu:RemoveObject('CreatePackageMenuItem')
+
+									menu:GetObject('TransmitMenuItem').OnClick = function()
+										shelOS.System.OpenFile('/Programs/Transmit.program/', {self.Path}, self.X, self.Y)
+									end
+
+									menu:GetObject('OpenWithMenuItem').OnClick = function()
+										shelOS.System.OpenFileWith(self.Path, program)
+									end
+								end
+
+								menu:GetObject('OpenMenuItem').OnClick = function()
+									self:OnClick(event, 1, x, y)
+								end
+
+								if readOnly then
+									menu:RemoveObject('RenameMenuItem')
+									menu:RemoveObject('DeleteMenuItem')
+								else
+									menu:GetObject('RenameMenuItem').OnClick = function()
+										shelOS.System.RenameFile(self.Path, refresh, program)
+									end
+
+									menu:GetObject('DeleteMenuItem').OnClick = function()
+										shelOS.System.DeleteFile(self.Path, refresh, program)
+									end
+								end
+
+
+								menu:GetObject('AddToFavouritesMenuItem').OnClick = function()
+									shelOS.System.AddFavourite(shelOS.System.ResolveAlias(self.Path))
+									refresh()
+								end
+
+								menu:GetObject('AddToDesktopMenuItem').OnClick = function()
+									shelOS.System.AddToDesktop(shelOS.System.ResolveAlias(self.Path))
+									refresh()
+								end
+
+								menu:GetObject('MakeAliasMenuItem').OnClick = function()
+									local realPath = shelOS.System.ResolveAlias(self.Path)
+									local newPath = program.Helpers.ParentFolder(realPath) .. '/' .. program.Helpers.RemoveExtension(fs.getName(self.Path)) .. ' Alias'
+									shelOS.System.MakeAlias(newPath, realPath)
+									refresh()
+								end
+
+								if program.Helpers.TidyPath(self.Path) == program.Helpers.TidyPath(shelOS.System.ResolveAlias(self.Path)) then
+									menu:RemoveObject('ResolveAliasMenuItem')
+								else
+									menu:GetObject('ResolveAliasMenuItem').OnClick = function()
+										local realPath = shelOS.System.ResolveAlias(self.Path)
+										openFolder(program.Helpers.ParentFolder(realPath), realPath)
+									end
+								end
+
+								menu:GetObject('CopyMenuItem').OnClick = function()
+									shelOS.System.Clipboard:Copy(self.Path, 'path')
+								end
+
+								if readOnly then
+									menu:RemoveObject('CutMenuItem')
+								else
+									menu:GetObject('CutMenuItem').OnClick = function()
+										shelOS.System.Clipboard:Cut(self.Path, 'path')
+									end
+								end
+
+								menu:GetObject('PasteMenuItem').OnClick = function()
+								 	paste()
+								end
+					
+								menu:GetObject('PasteMenuItem').Enabled = shelOS.System.Clipboard.Type == 'path'
+
+								menu:OnUpdate('Children')
+							end
+						else
+							if _fs.isDir(self.Path) and (not extension or #extension == 0) then
+								openFolder(self.Path)
+							else
+								shelOS.OpenFile(self.Path, nil, self.X, self.Y)
+							end
+						end
+					end,
+					Height = FileIcon.Height,
+					Width = FileIcon.Width
+				}
+			)
+		end
+	end
+
+	program:GetObject('FilesCollectionView').Items = items
+	program:GetObject('PathTextBox').Text = path
+end
+
+refresh = function()
+	openFolder(currentPath)
+end
+
+local function saveSettings()
+	local h = fs.open('.Files.settings', 'w')
+	if h then
+		h.write(textutils.serialize({
+			ShowHidden = showHidden,
+			ShowExtensions = showExtensions,
+		}))
+		h.close()
+	end
+end
+
+local function readSettings()
+	local h = fs.open('.Files.settings', 'r')
+	if h then
+		local settings = textutils.unserialize(h.readAll())
+		showHidden = settings.ShowHidden or false
+		showExtensions = settings.ShowExtensions or false
+	end
+end
+
+program:Run(function()
+	readSettings()
+
+	if #args == 1 and _fs.exists(args[1]) then
+		openFolder(args[1])
+	else
+		openFolder('/Favourites')
+	end
+
+	program:GetObject('UpButton').OnClick = function(self, event, side, x, y)
+		if currentPath == '/' then
+			openFolder('/Favourites')
+		else
+			openFolder(self.Bedrock.Helpers.ParentFolder(currentPath))
+		end
+	end
+
+	program:GetObject('PathTextBox').OnChange = function(self, event, keychar)
+		if keychar == keys.enter then
+			local path = program.Helpers.TidyPath(self.Text)
+			if _fs.exists(path) then
+				if _fs.isDir(path) then
+					openFolder(path)
+				else
+					openFolder(program.Helpers.ParentFolder(path), path)
+				end
+			else
+				refresh()
+			end
+			program:SetActiveObject()
+		end
+	end
+
+	program:GetObject('FilesCollectionView').OnClick = function(self, event, side, x, y)
+		if side == 2 and self:ToggleMenu('bgmenu', x, y) then
+			local menu = self.Bedrock.Menu
+
+			menu:GetObject('PasteMenuItem').OnClick = function()
+				paste()
+			end
+
+			menu:GetObject('PasteMenuItem').Enabled = shelOS.System.Clipboard.Type == 'path'
+
+			if showHidden then
+				menu:GetObject('ToggleHiddenMenuItem').Text = 'Hide Hidden Files'
+			end
+			menu:GetObject('ToggleHiddenMenuItem').OnClick = function()
+				showHidden = not showHidden
+				saveSettings()
+				refresh()
+			end
+
+			if showExtensions then
+				menu:GetObject('ToggleExtensionMenuItem').Text = 'Hide Extensions'
+			end
+			menu:GetObject('ToggleExtensionMenuItem').OnClick = function()
+				showExtensions = not showExtensions
+				saveSettings()
+				refresh()
+			end
+
+			menu:GetObject('NewFileMenuItem').OnClick = function()
+				shelOS.System.NewFile(currentPath, refresh, program)
+			end
+
+			menu:GetObject('NewFolderMenuItem').OnClick = function()
+				shelOS.System.NewFolder(currentPath, refresh, program)
+			end
+
+			menu:GetObject('RefreshMenuItem').OnClick = function()
+				refresh()
+			end
+
+			menu:OnUpdate('Children')
+		end
+	end
+
+	-- program:GetObject('BackButton').OnClick = function(self)
+	-- 	if history[historyItem-1] then
+	-- 		openFolder(history[historyItem])
+	-- 		historyItem = historyItem - 1
+	-- 	end
+	-- end
+
+	-- program:GetObject('ForwardButton').OnClick = function(self)
+	-- 	if history[historyItem+1] then
+	-- 		openFolder(history[historyItem - 1])
+	-- 		historyItem = historyItem + 1
+	-- 	end
+	-- end
+end)
