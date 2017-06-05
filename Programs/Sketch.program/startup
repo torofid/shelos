@@ -1,0 +1,735 @@
+local bedrockPath='/' if OneOS then OneOS.LoadAPI('/System/API/Bedrock.lua', false)elseif fs.exists(bedrockPath..'/Bedrock')then os.loadAPI(bedrockPath..'/Bedrock')else if http then print('Downloading Bedrock...')local h=http.get('http://pastebin.com/raw.php?i=0MgKNqpN')if h then local f=fs.open(bedrockPath..'/Bedrock','w')f.write(h.readAll())f.close()h.close()os.loadAPI(bedrockPath..'/Bedrock')else error('Failed to download Bedrock. Is your internet working?') end else error('This program needs to download Bedrock to work. Please enable HTTP.') end end if Bedrock then Bedrock.BasePath = bedrockPath Bedrock.ProgramPath = shell.getRunningProgram() end
+
+local program = Bedrock:Initialise()
+
+function ViewClick(self, event, side, x, y)
+	if program.DragWindow and event == 'mouse_drag' then
+		program.DragWindow.X = x - program.DragWindow.DragX
+		program.DragWindow.Y = y
+		program.DragWindow:OnWindowDrag(x, y)
+		program.WindowDragTimer = program:StartTimer(function(_,timer)
+			if timer and timer == program.WindowDragTimer then
+				program.WindowDragTimer = nil
+				program.DragWindow = nil
+			end
+		end, 0.8)
+	elseif self.Visible and not self.IgnoreClick then
+		for i = #self.Children, 1, -1 do --children are ordered from smallest Z to highest, so this is done in reverse
+			local child = self.Children[i]
+			if self:DoClick(child, event, side, x, y) then
+				if self.OnChildClick then
+					self:OnChildClick(child, event, side, x, y)
+				end
+				return true
+			end
+		end
+		if event == 'mouse_click' and self.OnClick and self:OnClick(event, side, x, y) ~= false then
+			return true
+		elseif event == 'mouse_drag' and self.OnDrag and self:OnDrag(event, side, x, y) ~= false then
+			return true
+		elseif event == 'mouse_scroll' and self.OnScroll and self:OnScroll(event, side, x, y) ~= false then
+			return true
+		else
+			return false
+		end
+	else
+		return false
+	end
+end
+
+function OpenDocument(path)
+	CloseDocument(function(success)
+		if success then
+			program:RemoveObject('Artboard')
+			local image = ImageIO.LoadDocument(path, program)
+			if image then
+				program:AddObject({
+					Type = 'Artboard',
+					X = program.Helpers.Round((Drawing.Screen.Width - image.Width - 3) / 2),
+					Y = program.Helpers.Round((Drawing.Screen.Height - image.Height) / 2),
+					Width = image.Width,
+					Height = image.Height,
+					ImageName = image.ImageName,
+					ImagePath = image.ImagePath,
+					ImageFormat = image.ImageFormat,
+					Layers = image.Layers,
+				})
+			end
+		end
+	end)
+end
+
+function SaveWithFormat(path, format)
+	local err
+	local content
+
+	local artboard = program:GetObject('Artboard')
+	if artboard then
+		format = format:gsub('%.', '')
+		if format == 'skch' then
+			content = textutils.serialize(ImageIO.SaveSKCH(artboard.Layers))
+		elseif format == 'nft' then
+			content = ''
+			local lines = ImageIO.SaveNFT(artboard:GetFlattenedPixels())
+			for i, v in ipairs(lines) do
+				content = content .. v .. '\n'
+			end
+		elseif format == 'nfp' then
+			content = ''
+			local lines = ImageIO.SaveNFP(artboard:GetFlattenedPixels())
+			for i, v in ipairs(lines) do
+				content = content .. v .. '\n'
+			end
+		else
+			err = 'Unknown format "'..format..'"'
+		end
+		if not err and content then
+			local _fs = fs
+			if OneOS then
+				_fs = OneOS.FS
+			end
+			local h = _fs.open(path, 'w')
+			if h then
+				h.write(content)
+				h.close()
+			else
+				err = 'Could not open file.'
+			end
+		else
+			err = 'Content conversion failed.'
+		end
+	else
+		err = 'No artboard.'
+	end
+
+	if err then
+		program:DisplayAlertWindow('Save Failed', "Document write failed: "..err, {'Ok'}, function(button)
+		end)
+	end
+end
+
+function SaveDocument(callback)
+	callback = callback or function()end
+	local artboard = program:GetObject('Artboard')
+	if artboard then
+		if artboard.ImagePath then
+			SaveWithFormat(artboard.ImagePath, artboard.ImageFormat:lower())
+			artboard:SetSavedState()
+			callback(true)
+		else
+			program:DisplaySaveFileWindow('Save Image', function(success, path, filename)
+				if success then
+					SaveWithFormat(path, artboard.ImageFormat:lower())
+					artboard:SetSavedState()
+					artboard.ImagePath = path
+					callback(true)
+				else
+					callback(false)
+				end
+			end, artboard.ImageFormat:lower())
+		end
+	else
+		callback(false)
+	end
+end
+
+local artboardOnlyMenuItems = {
+	'Tool',
+	'Save',
+	'SaveAs',
+	'Undo',
+	'Redo',
+	'Cut',
+	'Copy',
+	'Paste',
+	'Resize',
+	'CanvasSize',
+	'Crop',
+	'Erase',
+	'Flatten',
+	'ZoomIn',
+	'ZoomOut',
+	'100%Zoom',
+	'FitZoom',
+	'FilterMask',
+	'NewLayerImage'
+}
+
+function program.OnArtboardOpen(artboard)
+	for i, v in ipairs(artboardOnlyMenuItems) do
+		for i2, v2 in ipairs(program:GetObjects(v..'MenuItem')) do
+			v2.Enabled = true
+		end
+	end
+	program:GetObject('Sidebar'):UpdateButtons(true)
+end
+
+function program.OnArtboardClose(artboard)
+	for i, v in ipairs(artboardOnlyMenuItems) do
+		for i2, v2 in ipairs(program:GetObjects(v..'MenuItem')) do
+			v2.Enabled = false
+		end
+	end
+	program:GetObject('Sidebar'):UpdateButtons(false)
+	program:GetObject('CurrentToolLabel').Text = ''
+	program:GetObject('PrimaryColourView').BackgroundColour = colours.transparent
+	program:GetObject('SecondaryColourView').BackgroundColour = colours.transparent
+end
+
+function NewDocument()
+	CloseDocument(function(success)
+		if success then
+			program:DisplayWindow('newdocumentwindow', 'New Document')
+
+			local colourView = program.Window:GetObject('CurrentColourButton')
+			program.Window:GetObject('NoneColourButton').OnClick = function()
+				colourView.BackgroundColour = colours.transparent
+			end
+
+			for i, v in ipairs(program.Window:GetObjects('BackgroundColourButton')) do
+				v.OnClick = function(self)
+					colourView.BackgroundColour = self.BackgroundColour
+				end
+			end
+
+			local presetChanging = false
+			program:GetObject('WidthNumberBox').OnChange = function()
+				if not presetChanging then
+					program:GetObject('PresetButton').Text = 'Custom      V'
+				end
+			end
+			program:GetObject('HeightNumberBox').OnChange = function()
+				if not presetChanging then
+					program:GetObject('PresetButton').Text = 'Custom      V'
+				end
+			end
+
+			program:GetObject('PresetButton').OnClick = function(self)
+				if self:ToggleMenu('sizepresetmenu', 1, 1) then
+					program:GetObject('CustomMenuItem').OnClick = function()
+						self.Text = 'Custom      V'
+					end
+
+					for i, v in ipairs(program:GetObjects('PresetMenuItem')) do
+						v.OnClick = function(_self)
+							local text = program.Helpers.TruncateString(_self.Text, 12)
+							for i = 1, 12 - #text do
+								text = text .. ' '
+							end
+							text = text .. 'V'
+							self.Text = text
+							presetChanging = true
+							program:GetObject('WidthNumberBox').Value = _self.SizeWidth
+							program:GetObject('HeightNumberBox').Value = _self.SizeHeight
+							presetChanging = false
+						end
+					end
+				end
+			end
+
+			program:GetObject('CancelButton').OnClick = function()
+				program.Window:Close()
+			end
+
+			program:GetObject('OkButton').OnClick = function()
+				local width = program:GetObject('WidthNumberBox').Value
+				local height = program:GetObject('HeightNumberBox').Value
+				local background = colourView.BackgroundColour
+				program.Window:Close()
+
+				local pixels = {}
+
+				for x = 1, width do
+					pixels[x] = {}
+					for y = 1, height do
+						pixels[x][y] = {
+							BackgroundColour = background,
+							TextColour = colours.black,
+							Character = ' '
+						}
+					end
+				end
+
+				program:AddObject({
+					Type = 'Artboard',
+					X = program.Helpers.Round((Drawing.Screen.Width - width - 3) / 2),
+					Y = program.Helpers.Round((Drawing.Screen.Height - height) / 2),
+					Width = width,
+					Height = height,
+					ImageFormat = 'skch',
+					Layers = {
+						{
+							Name = 'Background',
+							Pixels = pixels,
+							BackgroundColour = background,
+							Visible = true,
+							Index = 1,
+							LayerType = 'Normal'
+						}
+					},
+				})
+			end
+		end
+	end)
+end
+
+function SaveDocumentAs()
+	local artboard = program:GetObject('Artboard')
+	if artboard then
+		program:DisplayWindow('saveasformatwindow', 'Save As')
+
+		local formatButtons = program:GetObjects('FormatButton')
+		local format = 'skch'
+
+		for i, v in ipairs(formatButtons) do
+			v.OnClick = function(self)
+				self.Toggle = true
+				format = self.Format
+				for i2, v2 in ipairs(formatButtons) do
+					if v2 ~= self then
+						v2.Toggle = false
+					end
+				end
+			end
+		end
+
+		program:GetObject('CancelButton').OnClick = function()
+			program.Window:Close()
+		end
+
+		program:GetObject('NextButton').OnClick = function()
+			program.Window:Close()
+			program:DisplaySaveFileWindow('Save Image As', function(success, path, filename)
+				if success then
+					SaveWithFormat(path, format)
+				end
+			end, format)
+		end
+	end
+end
+
+function CloseDocument(callback)
+	local artboard = program:GetObject('Artboard')
+	if artboard and artboard:Modified() then
+		program:DisplayAlertWindow('Unsaved Changes!', "Save changes to your document?", {'Save', 'Cancel', "Don't Save"}, function(button)
+			if button == 'Cancel' then
+				callback(false)
+			elseif button == "Don't Save" then
+				callback(true)
+				program:RemoveObject(artboard)
+			else
+				SaveDocument(function(success)
+					if success then
+						program:RemoveObject(artboard)
+					end
+					callback(success)
+				end)
+			end
+		end)
+		return false
+	else
+		program:RemoveObject('Artboard')
+		callback(true)
+		return true
+	end
+end
+
+if OneOS then
+	OneOS.CanClose = function()
+		return CloseDocument(function(close)
+				if close then
+					program:Quit()
+				end
+			end)
+	end
+end
+
+function ResizeDocument()
+	local artboard = program:GetObject('Artboard')
+	if artboard then
+		program:DisplayWindow('resizewindow', 'Resize Image')
+
+		local constrainProportions = true
+		local keepTextDetail = true
+		local proportions = artboard.Width / artboard.Height
+
+		local widthNumberBox = program:GetObject('WidthNumberBox')
+		local heightNumberBox = program:GetObject('HeightNumberBox')
+
+		widthNumberBox.Value = artboard.Width
+		heightNumberBox.Value = artboard.Height
+
+		local proportionChange = false
+
+		widthNumberBox.OnChange = function()
+			if constrainProportions and not proportionChange then
+				proportionChange = true
+				heightNumberBox:SetValue(program.Helpers.Round(widthNumberBox.Value / proportions))
+			else
+				proportionChange = false
+			end
+		end
+
+		heightNumberBox.OnChange = function()
+			if constrainProportions and not proportionChange then
+				proportionChange = true
+				widthNumberBox:SetValue(program.Helpers.Round(heightNumberBox.Value * proportions))
+			else
+				proportionChange = false
+			end
+		end
+		
+		program:GetObject('ProportionsButton').OnClick = function(self)
+			constrainProportions = self.Toggle
+		end
+		
+		program:GetObject('TextDetailButton').OnClick = function(self)
+			keepTextDetail = self.Toggle
+		end
+
+		program:GetObject('ResizeButton').OnClick = function()
+			artboard:Resize(widthNumberBox.Value, heightNumberBox.Value, keepTextDetail)
+			program.Window:Close()
+		end
+
+		program:GetObject('CancelButton').OnClick = function()
+			program.Window:Close()
+		end
+	end
+end
+
+function ChangeCanvasSize()
+	local artboard = program:GetObject('Artboard')
+	if artboard then
+		print('splie')
+		program:DisplayWindow('canvassizewindow', 'Change Canvas Size')
+
+		-- local constrainProportions = true
+		-- local keepTextDetail = true
+		-- local proportions = artboard.Width / artboard.Height
+
+		local widthNumberBox = program:GetObject('WidthNumberBox')
+		local heightNumberBox = program:GetObject('HeightNumberBox')
+
+		widthNumberBox.Value = artboard.Width
+		heightNumberBox.Value = artboard.Height
+
+		local anchorPosition = 5
+
+		local function updateAnchorButtons(self)
+			local anchors = {' ',' ',' ',' ',' ',' ',' ',' ',' '}
+
+			-- i'm sure there's a better way to do this...
+			if anchorPosition == 1 then
+				anchors[1] = '#'
+				anchors[2] = '>'
+				anchors[4] = 'v'
+			elseif anchorPosition == 2 then
+				anchors[1] = '<'
+				anchors[2] = '#'
+				anchors[3] = '>'
+				anchors[5] = 'v'
+			elseif anchorPosition == 3 then
+				anchors[2] = '<'
+				anchors[3] = '#'
+				anchors[6] = 'v'
+			elseif anchorPosition == 4 then
+				anchors[1] = '^'
+				anchors[4] = '#'
+				anchors[5] = '>'
+				anchors[7] = 'v'
+			elseif anchorPosition == 5 then
+				anchors[2] = '^'
+				anchors[4] = '<'
+				anchors[5] = '#'
+				anchors[6] = '>'
+				anchors[8] = 'v'
+			elseif anchorPosition == 6 then
+				anchors[3] = '^'
+				anchors[6] = '#'
+				anchors[5] = '<'
+				anchors[9] = 'v'
+			elseif anchorPosition == 7 then
+				anchors[4] = '^'
+				anchors[7] = '#'
+				anchors[8] = '>'
+			elseif anchorPosition == 8 then
+				anchors[5] = '^'
+				anchors[8] = '#'
+				anchors[7] = '<'
+				anchors[9] = '>'
+			elseif anchorPosition == 9 then
+				anchors[6] = '^'
+				anchors[9] = '#'
+				anchors[8] = '<'
+			end
+
+			if artboard.Height > heightNumberBox.Value then
+				for i, v in ipairs(anchors) do
+					if string.find(v, "%^") then
+						v = v:gsub('%^','v')
+					elseif string.find(v, "v") then
+						v = v:gsub('v','%^')
+					end
+					anchors[i] = v
+				end
+			end
+
+			if artboard.Width > widthNumberBox.Value then
+				for i, v in ipairs(anchors) do
+					if string.find(v, ">") then
+						v = v:gsub('>','<')
+					elseif string.find(v, "<") then
+						v = v:gsub('<','>')
+					end
+					anchors[i] = v
+				end
+			end
+
+			for i, v in ipairs(anchors) do
+				program:GetObject('Anchor'..i..'Button').Text = v
+			end
+		end
+
+		for i = 1, 9 do
+			program:GetObject('Anchor'..i..'Button').OnClick = function()
+				anchorPosition = i
+				updateAnchorButtons()
+			end
+		end
+
+		updateAnchorButtons()
+
+		widthNumberBox.OnChange = function()
+			updateAnchorButtons()
+		end
+
+		heightNumberBox.OnChange = function()
+			updateAnchorButtons()
+		end
+
+		program:GetObject('OkButton').OnClick = function()
+			artboard:ChangeCanvasSize(widthNumberBox.Value, heightNumberBox.Value, anchorPosition)
+			program.Window:Close()
+		end
+
+		program:GetObject('CancelButton').OnClick = function()
+			program.Window:Close()
+		end
+	end
+end
+
+local tArgs = {...}
+
+program:Run(function()
+
+	if OneOS then
+		Clipboard = OneOS.Clipboard
+	end
+
+
+	-- NewDocument()
+	--------------------------------File Menu---------------------------------------
+	program:PrepareMenu('filemenu')
+
+	program:GetObject('NewMenuItem').OnClick = function(self, event, side, x, y)
+		NewDocument()
+	end
+	program:GetObject('OpenMenuItem').OnClick = function(self, event, side, x, y)
+		program:DisplayOpenFileWindow('Open Image', function(success, path)
+			if success then
+				OpenDocument(path)
+			end
+		end)
+	end
+	program:GetObject('SaveMenuItem').OnClick = function(self, event, side, x, y)
+		SaveDocument()
+	end
+	program:GetObject('SaveAsMenuItem').OnClick = function(self, event, side, x, y)
+		SaveDocumentAs()
+	end
+	program:GetObject('QuitMenuItem').OnClick = function(self, event, side, x, y)
+		CloseDocument(function(close)
+			if close then
+				program:Quit()
+				term.setBackgroundColour(colours.black)
+				term.setTextColour(colours.white)
+				term.clear()
+				term.setCursorPos(1, 1)
+
+				local function PrintCentered(text, y)
+				    local w, h = term.getSize()
+				    x = math.ceil(math.ceil((w / 2) - (#text / 2)), 0)+1
+				    term.setCursorPos(x, y)
+				    print(text)
+				end
+
+				PrintCentered("Thanks for using Sketch 2!", (Drawing.Screen.Height / 2) - 1)
+				term.setTextColour(colours.lightGrey)
+				PrintCentered("Photoshop Inspired Image Editor for ComputerCraft", (Drawing.Screen.Height / 2))
+				term.setTextColour(colours.white)
+				PrintCentered("(c) oeed 2013 - 2014", (Drawing.Screen.Height / 2) + 3)
+				term.setCursorPos(1, Drawing.Screen.Height)
+			end
+		end)
+	end
+
+	program:GetObject('FileMenuButton').OnClick = function(self, event, side, x, y)
+		self:ToggleMenu('filemenu')
+	end
+	--------------------------------------------------------------------------------
+
+	--------------------------------Edit Menu---------------------------------------
+	program:PrepareMenu('editmenu')
+
+	program:GetObject('UndoMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:Undo()
+		end
+	end
+	program:GetObject('RedoMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:Redo()
+		end
+	end
+	program:GetObject('CutMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:Cut()
+		end
+	end
+	program:GetObject('CopyMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:Copy()
+		end
+	end
+	program:GetObject('PasteMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:Paste()
+		end
+	end
+
+	program:GetObject('EditMenuButton').OnClick = function(self, event, side, x, y)
+		self:ToggleMenu('editmenu')
+	end
+	--------------------------------------------------------------------------------
+
+	--------------------------------Image Menu--------------------------------------
+	program:PrepareMenu('imagemenu')
+
+	program:GetObject('ResizeMenuItem').OnClick = function(self, event, side, x, y)
+		ResizeDocument()
+	end
+	program:GetObject('CanvasSizeMenuItem').OnClick = function(self, event, side, x, y)
+		ChangeCanvasSize()
+	end
+	program:GetObject('CropMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:Crop()
+		end
+	end
+	program:GetObject('EraseMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			return artboard:EraseSelection()
+		end
+		return false
+	end
+	program:GetObject('NewLayerImageMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:NewLayer()
+		end
+	end
+	program:GetObject('FlattenMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:FlattenImage()
+		end
+	end
+
+	program:GetObject('ImageMenuButton').OnClick = function(self, event, side, x, y)
+		self:ToggleMenu('imagemenu')
+	end
+	--------------------------------------------------------------------------------
+
+	--------------------------------View Menu---------------------------------------
+	program:PrepareMenu('viewmenu')
+
+	program:GetObject('ZoomOutMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:SetZoom(artboard.Zoom / 2)
+		end
+	end
+	program:GetObject('ZoomInMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:SetZoom(artboard.Zoom * 2)
+		end
+	end
+	program:GetObject('100%ZoomMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard:SetZoom(1)
+		end
+	end
+	program:GetObject('FilterMaskMenuItem').OnClick = function(self, event, side, x, y)
+		local artboard = program:GetObject('Artboard')
+		if artboard then
+			artboard.ShowFilterMask = not artboard.ShowFilterMask
+		end
+	end
+
+	program:GetObject('ViewMenuButton').OnClick = function(self, event, side, x, y)
+		self:ToggleMenu('viewmenu')
+	end
+	--------------------------------------------------------------------------------
+
+	--------------------------------Tools Menu--------------------------------------
+	program:PrepareMenu('toolsmenu')
+
+	for i, v in ipairs(program:GetObjects('ToolMenuItem')) do
+		v.OnClick = function(self, event, side, x, y)
+			local artboard = program:GetObject('Artboard')
+			if artboard then
+				artboard:SetTool(getfenv()[self.ToolName])
+			end
+		end
+	end
+	program:GetObject('ToolsMenuButton').OnClick = function(self, event, side, x, y)
+		self:ToggleMenu('toolsmenu')
+	end
+	--------------------------------------------------------------------------------
+
+
+	program:GetObject('PrimaryColourView').OnClick = function(self, event, side, x, y)
+		program:GetObject('ColoursSidebarButton'):Click(event, side, x, y)
+	end
+
+	program:GetObject('SecondaryColourView').OnClick = function(self, event, side, x, y)
+		program:GetObject('ColoursSidebarButton'):Click(event, side, x, y)
+	end
+
+	program:GetObject('CurrentToolLabel').OnClick = function(self, event, side, x, y)
+		program:GetObject('ToolsSidebarButton'):Click(event, side, x, y)
+	end
+
+	program.View.Click = ViewClick
+
+
+	program.OnArtboardClose()
+
+	if #tArgs == 1 then
+		OpenDocument(tArgs[1])
+	else
+		NewDocument()
+	end
+	-- TODO: remove!
+	-- program:RegisterKeyboardShortcut({'\\'}, function()os.reboot()end)
+end)

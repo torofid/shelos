@@ -1,0 +1,190 @@
+OneOS.LoadAPI('/System/API/Bedrock.lua', false)
+OneOS.LoadAPI('/System/API/Peripheral.lua', true)
+OneOS.LoadAPI('/System/API/Wireless.lua', true)
+
+tArgs = {...}
+
+local program = Bedrock:Initialise()
+local animate = false
+
+function SetStatus(label1, label2, image, yesFunc, noFunc)
+	label2 = label2 or ''
+	if not program.View or program.View.Name ~= 'message' then
+		program:LoadView('message')
+	end
+	program:GetObject('StatusLabel').Text = label1
+	program:GetObject('StatusLabel').TextColour = colours.black
+	program:GetObject('SecondaryStatusLabel').Text = label2
+	program:GetObject('SecondaryStatusLabel').TextColour = colours.lightGrey
+	animate = false
+	if image then
+		if image == 'anm' then
+			animate = true
+			UpdateAnimation()
+		else
+			program:GetObject('StatusImageView').Path = 'Images/'..image
+		end
+	else
+		program:GetObject('StatusImageView').Visible = false
+	end
+
+	if yesFunc and noFunc then
+		program:GetObject('YesButton').Visible = true
+		program:GetObject('YesButton').OnClick = yesFunc
+		program:GetObject('NoButton').Visible = true
+		program:GetObject('NoButton').OnClick = noFunc
+	else
+		program:GetObject('YesButton').Visible = false
+		program:GetObject('NoButton').Visible = false
+	end
+end
+
+function UpdateStatus(id, replyChannel, message, savedFile)
+	if id == 0 then
+		SetStatus('No Wireless Modem', 'Attach a wireless modem and reopen Transmit', 'disabled')
+	elseif id == 1 then
+		SetStatus('Waiting For File', 'Waiting for another computer to send a file', 'anm')
+	elseif id == 2 then
+		SetStatus('Waiting For Reciever To Accept', 'The reciever needs to accept the file', 'anm')
+	elseif id == 3 then
+		if savedFile then
+			SetStatus('Complete!', 'The file was saved to: '..savedFile, 'anm4')
+		else
+			SetStatus('Complete!', 'The file transfer completed successfully', 'anm4')
+		end
+	elseif id == 4 then
+		SetStatus('Rejected', 'The reciever did not accept the file', 'anm4')
+	elseif id == 5 then
+		SetStatus('Accept File?', message.content.senderName..' would like to send you the file "'..message.content.fileName..'" Do you want to accept it?', 'anm1', function()
+			Wireless.SendMessage(replyChannel, {accept = true}, nil, message.messageID, message.senderID)
+		end, function()
+			Wireless.SendMessage(replyChannel, {accept = false}, nil, message.messageID, message.senderID)
+			UpdateStatus(1)
+		end)
+	elseif id == 6 then
+		SetStatus('Waiting For File', 'Waiting for another computer to send a file', 'anm')
+	end
+end
+
+function UpdateAnimation()
+	if animate then
+		local path = program:GetObject('StatusImageView').Path
+		if path == 'Images/anm0' then
+			program:GetObject('StatusImageView').Path = 'Images/'..'anm1'
+		elseif path == 'Images/anm1' then
+			program:GetObject('StatusImageView').Path = 'Images/'..'anm2'
+		elseif path == 'Images/anm2' then
+			program:GetObject('StatusImageView').Path = 'Images/'..'anm3'
+		else
+			program:GetObject('StatusImageView').Path = 'Images/'..'anm0'
+		end
+	end
+	program:Draw()
+end
+
+function RecieveFile()
+	Wireless.Responder = function(event, side, channel, replyChannel, message, distance)
+		if channel == Wireless.Channels.TransmitDiscovery then
+			if replyChannel and message.content == 'Discover' then
+				Wireless.SendMessage(replyChannel, {id = os.getComputerID(), name = os.getComputerLabel()}, nil, message.messageID, message.senderID)
+			end
+		elseif channel == Wireless.Channels.TransmitRequest then
+			if replyChannel and message.content.senderName and message.content.fileName then
+				UpdateStatus(5, replyChannel, message)
+			end
+		elseif channel == Wireless.Channels.TransmitSend then
+			if replyChannel and message.content.fileName and message.content.data then
+				local h = OneOS.FS.open('/Desktop/Documents/'..message.content.fileName, 'w')
+				h.write(message.content.data)
+				h.close()
+				UpdateStatus(3, nil, nil, '/Desktop/Documents/'..message.content.fileName)
+			end
+		end
+	end
+end
+
+function DiscoverComputers()
+	Wireless.Responder = function(event, side, channel, replyChannel, message, distance)
+		if channel == Wireless.Channels.TransmitDiscoveryReply then
+			local computers = program:GetObject('DiscoverView').Computers
+			local duplicate = false
+			for i, v in ipairs(computers) do
+				if v.ID == message.content.id then
+					duplicate = true
+					break
+				end
+			end
+
+			if not duplicate then
+				table.insert(computers, {
+					ID = message.content.id,
+					Name = message.content.name
+				})
+			end
+			program:GetObject('DiscoverView').Computers = computers
+			program:GetObject('DiscoverView'):OnUpdate('Computers')
+		end
+	end
+end
+
+function SendToComputer(computer)
+	UpdateStatus(2)
+	program:Draw()
+	local h = OneOS.FS.open(tArgs[1], 'r')
+	local f = h.readAll()
+	h.close()
+
+	Wireless.Responder = nil
+	local _m = Wireless.SendMessage(Wireless.Channels.TransmitRequest, {senderName = os.getComputerLabel(), fileName = fs.getName(tArgs[1])}, Wireless.Channels.TransmitRequestReply, nil, computer.ID)
+	local event, side, channel, replyChannel, message = Wireless.RecieveMessage(Wireless.Channels.TransmitRequestReply, _m.messageID, 20)
+	if message and message.content and message.content.accept == true then
+		Wireless.SendMessage(Wireless.Channels.TransmitSend, {data = f, fileName = fs.getName(tArgs[1])}, Wireless.Channels.TransmitRequestReply, nil, computer.ID)
+		UpdateStatus(3)
+	else
+		UpdateStatus(2)
+	end
+end
+
+program:RegisterEvent('modem_message', function(self, ...)Wireless.HandleMessage(...) end)
+
+program:Run(function()
+
+	if not Wireless.Present() then
+		UpdateStatus(0)
+	else
+		Wireless.Initialise()
+		local channels = {
+			Wireless.Channels.TransmitDiscovery,
+			Wireless.Channels.TransmitDiscoveryReply,
+			Wireless.Channels.TransmitRequest,
+			Wireless.Channels.TransmitRequestReply,
+			Wireless.Channels.TransmitSend,
+		}
+		for i, v in ipairs(channels) do
+			Wireless.Open(v)
+		end
+
+		if not os.getComputerLabel() then
+			os.setComputerLabel('OneOS Computer')
+		end
+
+		if tArgs[1] then
+			program:LoadView('discover')
+			program:GetObject('DiscoverView').Computers = {}
+			program:StartRepeatingTimer(function()Wireless.SendMessage(Wireless.Channels.TransmitDiscovery, 'Discover')end, 1)
+		else
+			UpdateStatus(1)
+		end
+		program:GetObject('ComputerLabel').Text = 'This computer is: '..os.getComputerLabel()
+		program:StartRepeatingTimer(UpdateAnimation, 0.25)
+		program:Draw()
+
+		if program.View.Name == 'discover' then
+			DiscoverComputers()
+		else
+			RecieveFile()
+		end
+
+
+	end
+end)
